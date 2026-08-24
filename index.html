@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Villiam Thermal Companion</title>
+<style>
+  :root {
+    /* State colors: sleep → walk → run → panic */
+    --c-sleep: #2d6cdf;
+    --c-walk:  #22b573;
+    --c-run:   #f5a623;
+    --c-panic: #e23b3b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    user-select: none;
+  }
+
+  /* The whole scene lives in a square stage that fills the LCD */
+  #stage {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+
+  /* Soft color glow behind the dog — background-color is animatable,
+     so the mood shifts smoothly between states */
+  #glow {
+    position: absolute;
+    width: 88%; aspect-ratio: 1;
+    border-radius: 50%;
+    background-color: var(--c-sleep);
+    opacity: 0.32;
+    filter: blur(48px);
+    transition: background-color 1.6s ease;
+  }
+
+  /* Thin state ring hugging the round bezel */
+  #ring {
+    position: absolute; inset: 2%;
+    border-radius: 50%;
+    border: 3px solid var(--c-sleep);
+    opacity: 0.85;
+    transition: border-color 1.6s ease;
+  }
+
+  /* ---- Villiam ---- */
+  #dog {
+    position: relative;
+    width: 62%; aspect-ratio: 1;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2;
+  }
+  #dog img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  #dog img.active { opacity: 1; }
+
+  /* Emoji fallback shown until real GIFs exist */
+  #fallback {
+    font-size: 120px;
+    line-height: 1;
+    display: none;
+    filter: drop-shadow(0 0 18px rgba(0,0,0,0.6));
+  }
+  #fallback.visible { display: block; }
+
+  /* Panic: Villiam spins */
+  .spin { animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Run: little bounce */
+  .bounce { animation: bounce 0.45s ease-in-out infinite alternate; }
+  @keyframes bounce { from { transform: translateY(2%); } to { transform: translateY(-3%); } }
+
+  /* Sleep: floating z's */
+  #zzz {
+    position: absolute;
+    top: 12%; right: 20%;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  #zzz.visible { opacity: 1; }
+  #zzz span {
+    position: absolute;
+    color: #9db9e8;
+    font-weight: 700;
+    animation: floatz 3s ease-in infinite;
+  }
+  #zzz span:nth-child(1) { font-size: 22px; animation-delay: 0s;   }
+  #zzz span:nth-child(2) { font-size: 30px; animation-delay: 1s;   }
+  #zzz span:nth-child(3) { font-size: 40px; animation-delay: 2s;   }
+  @keyframes floatz {
+    0%   { transform: translate(0, 0) rotate(8deg);      opacity: 0; }
+    20%  { opacity: 0.9; }
+    100% { transform: translate(26px, -60px) rotate(-6deg); opacity: 0; }
+  }
+
+  /* ---- Readout ---- */
+  #readout {
+    position: absolute;
+    bottom: 11%;
+    z-index: 4;
+    text-align: center;
+    color: #e8e8e8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.9);
+  }
+  #state-label {
+    font-size: 15px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--c-sleep);
+    transition: color 1.6s ease;
+    margin-bottom: 4px;
+  }
+  #temps { font-size: 20px; font-weight: 600; }
+  #loads { font-size: 13px; opacity: 0.65; margin-top: 2px; }
+
+  #demo-badge {
+    position: absolute; top: 12%;
+    z-index: 4;
+    font-size: 11px; letter-spacing: 0.2em;
+    color: #777;
+    display: none;
+  }
+  #demo-badge.visible { display: block; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spin, .bounce, #zzz span { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="glow"></div>
+  <div id="ring"></div>
+
+  <div id="zzz"><span>z</span><span>z</span><span>Z</span></div>
+
+  <div id="dog">
+    <img id="img-sleep" alt="">
+    <img id="img-walk"  alt="">
+    <img id="img-run"   alt="">
+    <img id="img-panic" alt="">
+    <div id="fallback">🐕</div>
+  </div>
+
+  <div id="demo-badge">DEMO MODE</div>
+
+  <div id="readout">
+    <div id="state-label">sleeping</div>
+    <div id="temps">-- · --</div>
+    <div id="loads"></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CONFIG — tune everything here
+   ============================================================ */
+const CONFIG = {
+  // GIF files, relative to this HTML file. Drop your Villiam
+  // animations next to this file with these names.
+  assets: {
+    sleep: "sleeping.gif",
+    walk:  "walking.gif",
+    run:   "running.gif",
+    panic: "panic.gif",
+  },
+
+  // Temperature range mapped to stress 0..100
+  tempMin: 35,   // at or below this → contributes 0 stress
+  tempMax: 85,   // at or above this → contributes 100 stress
+
+  // How much load matters relative to temperature (0..1).
+  // 1.0 = 100% GPU load alone is enough for full panic.
+  loadWeight: 0.85,
+
+  // Stress thresholds for state transitions (0..100)
+  thresholds: { walk: 25, run: 50, panic: 75 },
+
+  // Hysteresis: state only changes after crossing a threshold
+  // by this margin, so Villiam doesn't flicker at boundaries.
+  hysteresis: 4,
+
+  // Extra motion applied on top of the GIFs
+  spinOnPanic: true,
+  bounceOnRun: true,
+
+  showReadout: true,
+};
+
+const STATES = ["sleep", "walk", "run", "panic"];
+const LABELS = { sleep: "sleeping", walk: "pacing", run: "running", panic: "MELTDOWN" };
+const COLORS = {
+  sleep: getCss("--c-sleep"), walk: getCss("--c-walk"),
+  run: getCss("--c-run"), panic: getCss("--c-panic"),
+};
+const EMOJI = { sleep: "😴🐕", walk: "🐕", run: "🐕💨", panic: "🌪️🐕" };
+
+function getCss(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/* ---- asset loading with graceful emoji fallback ---- */
+const imgs = {
+  sleep: document.getElementById("img-sleep"),
+  walk:  document.getElementById("img-walk"),
+  run:   document.getElementById("img-run"),
+  panic: document.getElementById("img-panic"),
+};
+const assetOk = { sleep: false, walk: false, run: false, panic: false };
+
+for (const s of STATES) {
+  imgs[s].onload  = () => { assetOk[s] = true;  render(true); };
+  imgs[s].onerror = () => { assetOk[s] = false; render(true); };
+  imgs[s].src = CONFIG.assets[s];
+}
+
+/* ============================================================
+   STRESS MODEL
+   ============================================================ */
+function normTemp(t) {
+  if (t == null || isNaN(t)) return 0;
+  return clamp(((t - CONFIG.tempMin) / (CONFIG.tempMax - CONFIG.tempMin)) * 100, 0, 100);
+}
+function normLoad(l) {
+  if (l == null || isNaN(l)) return 0;
+  const pct = l <= 1 ? l * 100 : l;   // CAM may report 0..1 or 0..100
+  return clamp(pct, 0, 100) * CONFIG.loadWeight;
+}
+function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+
+function computeStress(m) {
+  return Math.max(
+    normTemp(m.cpuTemp), normTemp(m.gpuTemp),
+    normLoad(m.cpuLoad), normLoad(m.gpuLoad),
+  );
+}
+
+/* ---- state machine with hysteresis ---- */
+let currentState = "sleep";
+function nextState(stress) {
+  const t = CONFIG.thresholds, h = CONFIG.hysteresis;
+  const up   = [t.walk + h, t.run + h, t.panic + h]; // must exceed to climb
+  const down = [t.walk - h, t.run - h, t.panic - h]; // must drop below to fall
+  let target = STATES.indexOf(currentState);
+  while (target < 3 && stress >= up[target]) target++;
+  while (target > 0 && stress < down[target - 1]) target--;
+  return STATES[target];
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+const glow = document.getElementById("glow");
+const ring = document.getElementById("ring");
+const zzz = document.getElementById("zzz");
+const dog = document.getElementById("dog");
+const fallback = document.getElementById("fallback");
+const stateLabel = document.getElementById("state-label");
+const tempsEl = document.getElementById("temps");
+const loadsEl = document.getElementById("loads");
+
+let lastMetrics = {};
+
+function render(force) {
+  const s = currentState;
+  const color = COLORS[s];
+
+  glow.style.backgroundColor = color;
+  ring.style.borderColor = color;
+  stateLabel.style.color = color;
+  stateLabel.textContent = LABELS[s];
+
+  for (const st of STATES) imgs[st].classList.toggle("active", st === s && assetOk[st]);
+  fallback.classList.toggle("visible", !assetOk[s]);
+  if (!assetOk[s]) fallback.textContent = EMOJI[s];
+
+  zzz.classList.toggle("visible", s === "sleep");
+  dog.classList.toggle("spin",   s === "panic" && CONFIG.spinOnPanic);
+  dog.classList.toggle("bounce", s === "run"   && CONFIG.bounceOnRun);
+
+  if (CONFIG.showReadout) {
+    const f = (v) => (v == null || isNaN(v)) ? "--" : Math.round(v);
+    tempsEl.textContent = `CPU ${f(lastMetrics.cpuTemp)}° · GPU ${f(lastMetrics.gpuTemp)}°`;
+    const lp = (v) => (v == null || isNaN(v)) ? "--" : Math.round(v <= 1 ? v * 100 : v);
+    loadsEl.textContent = `load ${lp(lastMetrics.cpuLoad)}% / ${lp(lastMetrics.gpuLoad)}%`;
+  } else {
+    document.getElementById("readout").style.display = "none";
+  }
+}
+
+function update(metrics) {
+  lastMetrics = metrics;
+  const stress = computeStress(metrics);
+  const s = nextState(stress);
+  if (s !== currentState) { currentState = s; }
+  render();
+}
+
+/* ============================================================
+   NZXT CAM HOOKUP
+   Merge into window.nzxt without clobbering width/height/shape
+   that CAM injects. CAM starts streaming once it detects
+   onMonitoringDataUpdate.
+   ============================================================ */
+let gotCamData = false;
+
+window.nzxt = window.nzxt || {};
+window.nzxt.v1 = Object.assign(window.nzxt.v1 || {}, {
+  onMonitoringDataUpdate: (data) => {
+    gotCamData = true;
+    const cpu = (data.cpus && data.cpus[0]) || {};
+    const gpu = (data.gpus && data.gpus[0]) || {};
+    update({
+      cpuTemp: cpu.temperature,
+      gpuTemp: gpu.temperature,
+      cpuLoad: cpu.load,
+      gpuLoad: gpu.load,
+    });
+  },
+});
+
+/* ============================================================
+   DEMO MODE — runs when opened in a normal browser (no CAM),
+   or with ?demo=1. Stress oscillates through all four states;
+   click/tap anywhere to jump ahead.
+   ============================================================ */
+const forceDemo = new URLSearchParams(location.search).get("demo") === "1";
+let demoPhase = 0;
+
+setTimeout(() => {
+  if (gotCamData && !forceDemo) return;
+  document.getElementById("demo-badge").classList.add("visible");
+
+  setInterval(() => {
+    if (gotCamData && !forceDemo) return;
+    demoPhase += 0.02;
+    const stress = (Math.sin(demoPhase) * 0.5 + 0.5) * 100;
+    update({
+      cpuTemp: CONFIG.tempMin + (stress / 100) * (CONFIG.tempMax - CONFIG.tempMin),
+      gpuTemp: CONFIG.tempMin + (stress / 100) * (CONFIG.tempMax - CONFIG.tempMin) - 4,
+      cpuLoad: stress * 0.8,
+      gpuLoad: stress,
+    });
+  }, 200);
+
+  document.body.addEventListener("click", () => { demoPhase += 0.8; });
+}, 2500);
+
+render(true);
+</script>
+</body>
+</html>
