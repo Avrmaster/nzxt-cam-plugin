@@ -316,6 +316,17 @@
   }
   #demo-badge.visible { display: block; }
 
+  #debug {
+    position: absolute; top: 4%; left: 50%;
+    transform: translateX(-50%);
+    z-index: 9;
+    font-size: 10px; line-height: 1.35;
+    color: #7fe08f;
+    text-align: center;
+    white-space: pre;
+    text-shadow: 0 1px 3px #000;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     #arm, #orient, #body-grp, #head-grp, #ear-near, #ear-far,
     #tail-grp, #leg-fn, #leg-ff, #leg-bn, #leg-bf, #zzz span { animation: none; }
@@ -612,56 +623,108 @@ function update(metrics) {
    that CAM injects. CAM starts streaming once it detects
    onMonitoringDataUpdate.
    ============================================================ */
-let gotCamData = false;
-
-window.nzxt = window.nzxt || {};
-window.nzxt.v1 = Object.assign(window.nzxt.v1 || {}, {
-  onMonitoringDataUpdate: (data) => {
-    gotCamData = true;
-    const cpu = (data.cpus && data.cpus[0]) || {};
-    const gpu = (data.gpus && data.gpus[0]) || {};
-    update({
-      cpuTemp: cpu.temperature,
-      gpuTemp: gpu.temperature,
-      cpuLoad: cpu.load,
-      gpuLoad: gpu.load,
-    });
-  },
-});
-
-/* ============================================================
-   DEMO MODE — runs when opened in a normal browser (no CAM),
-   or with ?demo=1. Stress oscillates through all four states;
-   click/tap anywhere to jump ahead. ?state=panic pins one state.
-   ============================================================ */
 const qs = new URLSearchParams(location.search);
 const forceDemo = qs.get("demo") === "1";
 const pinned = qs.get("state");
-let demoPhase = 0;
+const debugOn = qs.get("debug") === "1";
 
+let gotCamData = false;
+let camUpdates = 0;
+let demoTimer = null;
+let demoPhase = 0;
+const demoBadge = document.getElementById("demo-badge");
+
+/* Demo mode must yield the moment CAM speaks: clear the interval AND take
+   the badge back down. Previously the badge was only ever added, so on a
+   real Kraken — where CAM's first sample arrives after our 2.5s grace
+   period — it appeared and then stayed up forever over live data. */
+function stopDemo() {
+  if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
+  demoBadge.classList.remove("visible");
+}
+
+function startDemo() {
+  if (demoTimer) return;
+  demoBadge.classList.add("visible");
+  demoTimer = setInterval(() => {
+    demoPhase += 0.02;
+    const stress = (Math.sin(demoPhase) * 0.5 + 0.5) * 100;
+    update({
+      cpuLoad: stress * 0.8,
+      gpuLoad: stress,
+      // plausible temps purely for the readout; they do not drive state
+      cpuTemp: 38 + (stress / 100) * 42,
+      gpuTemp: 34 + (stress / 100) * 40,
+    });
+  }, 200);
+  document.body.addEventListener("click", () => { demoPhase += 0.8; });
+}
+
+/* ============================================================
+   NZXT CAM HOOKUP
+   ============================================================ */
+function onMonitoringDataUpdate(data) {
+  camUpdates++;
+  if (!gotCamData) {
+    gotCamData = true;
+    if (!forceDemo) stopDemo();   // real data wins
+  }
+  if (forceDemo) return;          // ?demo=1 keeps the synthetic sweep
+  const cpu = (data && data.cpus && data.cpus[0]) || {};
+  const gpu = (data && data.gpus && data.gpus[0]) || {};
+  update({
+    cpuTemp: cpu.temperature,
+    gpuTemp: gpu.temperature,
+    cpuLoad: cpu.load,
+    gpuLoad: gpu.load,
+  });
+}
+
+/* CAM may create or replace window.nzxt.v1 after this script has run, which
+   would silently discard our callback. Merge rather than assign, and re-assert
+   for the first 20s in case it gets clobbered. */
+function installHook() {
+  window.nzxt = window.nzxt || {};
+  window.nzxt.v1 = window.nzxt.v1 || {};
+  if (window.nzxt.v1.onMonitoringDataUpdate !== onMonitoringDataUpdate) {
+    window.nzxt.v1.onMonitoringDataUpdate = onMonitoringDataUpdate;
+  }
+}
+installHook();
+const hookGuard = setInterval(installHook, 500);
+setTimeout(() => clearInterval(hookGuard), 20000);
+
+/* ============================================================
+   DEMO MODE — only when nothing is feeding us. ?demo=1 forces it,
+   ?state=<name> pins one state, ?debug=1 shows what CAM is sending.
+   ============================================================ */
 if (pinned && STATES.includes(pinned)) {
   currentState = pinned;
   render();
+} else if (forceDemo) {
+  startDemo();
 } else {
-  setTimeout(() => {
-    if (gotCamData && !forceDemo) return;
-    document.getElementById("demo-badge").classList.add("visible");
+  setTimeout(() => { if (!gotCamData) startDemo(); }, 4000);
+}
 
-    setInterval(() => {
-      if (gotCamData && !forceDemo) return;
-      demoPhase += 0.02;
-      const stress = (Math.sin(demoPhase) * 0.5 + 0.5) * 100;
-      update({
-        cpuLoad: stress * 0.8,
-        gpuLoad: stress,
-        // plausible temps purely for the readout; they do not drive state
-        cpuTemp: 38 + (stress / 100) * 42,
-        gpuTemp: 34 + (stress / 100) * 40,
-      });
-    }, 200);
-
-    document.body.addEventListener("click", () => { demoPhase += 0.8; });
-  }, 2500);
+/* ---- on-device diagnostics ---- */
+if (debugOn) {
+  const dbg = document.createElement("div");
+  dbg.id = "debug";
+  document.getElementById("stage").appendChild(dbg);
+  setInterval(() => {
+    const v = (window.nzxt && window.nzxt.v1) || {};
+    dbg.textContent =
+      "cam:" + (gotCamData ? "YES" : "no") +
+      " upd:" + camUpdates +
+      " hook:" + (typeof v.onMonitoringDataUpdate === "function" ? "ok" : "LOST") +
+      " demo:" + (demoTimer ? "on" : "off") +
+      "\n" + (v.width || "?") + "x" + (v.height || "?") + " " + (v.shape || "?") +
+      " fps:" + (v.targetFps || "?") +
+      "\nstate:" + currentState +
+      " cpu:" + JSON.stringify(lastMetrics.cpuLoad) +
+      " gpu:" + JSON.stringify(lastMetrics.gpuLoad);
+  }, 500);
 }
 
 window.addEventListener("resize", render);

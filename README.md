@@ -36,6 +36,23 @@ four states. Click to fast-forward, or force it with `?demo=1`.
 Pin a single state to inspect it: `?state=sleep` · `?state=walk` ·
 `?state=run` · `?state=panic`
 
+## Diagnosing it on the Kraken
+
+Add `?debug=1` to the URL in CAM and a small green overlay reports what's
+actually happening on the device:
+
+```
+cam:YES upd:412 hook:ok demo:off
+240x240 circle fps:25
+state:walk cpu:31 gpu:18
+```
+
+- `cam:no` with `upd:0` means CAM is loading the page but never calling
+  `onMonitoringDataUpdate` — the page is fine, the integration isn't feeding it.
+- `hook:LOST` means something replaced `window.nzxt.v1` and our callback went
+  with it. A guard re-asserts it every 500ms for the first 20s.
+- `demo:on` alongside `cam:YES` should never happen; real data always wins.
+
 ## The MELTDOWN wheel
 
 At panic Villiam is thrown out to the rim and held at a fixed -90deg relative
