@@ -8,7 +8,7 @@ working. Four states, driven by **load only**.
 | < 25 | sleeping | blue | Lies down, tucks his legs, breathes, floating z's |
 | 25–50 | pacing | green | Trots on the spot, ears swinging |
 | 50–75 | running | amber | Faster gait, tail going |
-| > 75 | MELTDOWN | red | Tears around the rim of the screen |
+| > 75 | MELTDOWN | red | Runs the inside of the bezel, paws on the rim, like a hamster wheel |
 
 ## Why load and not temperature
 
@@ -32,6 +32,20 @@ four states. Click to fast-forward, or force it with `?demo=1`.
 
 Pin a single state to inspect it: `?state=sleep` · `?state=walk` ·
 `?state=run` · `?state=panic`
+
+## The MELTDOWN wheel
+
+At panic Villiam is thrown out to the rim and held at a fixed -90deg relative
+to the orbit arm, so his paws point radially outward for the whole lap — he
+runs along the inside of the bezel and goes briefly upside down at the top,
+hamster-wheel style. Because he inherits the arm's rotation, that single fixed
+angle is the whole trick: no counter-rotation and no mirroring needed.
+
+`orbitR: 81` is not arbitrary. It's derived so his paws land exactly on the
+ring: the sprite is 26% of the panel, its aspect is 150x105, and his paws sit
+at y=95 of 105, which puts them 0.147R below the sprite centre — so the centre
+has to ride at 0.96R - 0.147R = 0.813R. Change `size` and you have to
+recompute `orbitR`, or his feet will float or clip through the bezel.
 
 ## The sprite
 

@@ -53,35 +53,32 @@
     transition: border-color 1.6s ease;
   }
 
-  /* ---- Orbit rig ----
-     #arm rotates around the centre, #radius pushes Villiam out to the rim
-     (radius 0 = sitting in the middle), #upright counter-rotates so he is
-     never upside down, #facing mirrors him on the return half so he always
-     faces the direction he is travelling. */
+  /* ---- Orbit rig: hamster wheel ----
+     #arm rotates around the centre and #radius pushes Villiam out to the rim
+     (radius 0 = sitting in the middle). #orient then holds him at a fixed
+     -90deg so his paws point radially OUTWARD at every point of the lap —
+     he runs along the inside of the bezel like a hamster in a wheel, going
+     briefly upside down at the top. Because he inherits the arm's rotation,
+     the -90deg is all that's needed: no counter-rotation, no mirroring.
+     The arm runs in reverse so his nose leads the direction of travel. */
   #rig { position: absolute; inset: 0; z-index: 2; }
   #arm {
     position: absolute; top: 50%; left: 50%;
     width: 0; height: 0;
-    animation: orbit var(--orbit-dur, 3s) linear infinite;
+    animation: orbit var(--orbit-dur, 3s) linear infinite reverse;
     animation-play-state: paused;
   }
   #radius {
     transform: translateX(var(--orbit-r, 0px));
     transition: transform 1s ease;
   }
-  #upright {
-    animation: orbit var(--orbit-dur, 3s) linear infinite reverse;
-    animation-play-state: paused;
+  #orient {
+    transform: rotate(0deg);
+    transition: transform 0.7s ease;
   }
-  #facing {
-    animation: facing var(--orbit-dur, 3s) steps(1) infinite;
-    animation-play-state: paused;
-  }
-  #stage.orbiting #arm,
-  #stage.orbiting #upright,
-  #stage.orbiting #facing { animation-play-state: running; }
-  @keyframes orbit  { to { transform: rotate(360deg); } }
-  @keyframes facing { 0% { transform: scaleX(1); } 50% { transform: scaleX(-1); } }
+  #stage.orbiting #orient { transform: rotate(var(--feet-rot, -90deg)); }
+  #stage.orbiting #arm { animation-play-state: running; }
+  @keyframes orbit { to { transform: rotate(360deg); } }
 
   /* ---- Villiam ---- */
   #dog {
@@ -206,7 +203,7 @@
   #demo-badge.visible { display: block; }
 
   @media (prefers-reduced-motion: reduce) {
-    #arm, #upright, #facing, #body-grp, #head-grp, #ear-near, #ear-far,
+    #arm, #orient, #body-grp, #head-grp, #ear-near, #ear-far,
     #tail-grp, #leg-fn, #leg-ff, #leg-bn, #leg-bf, #zzz span { animation: none; }
   }
 </style>
@@ -219,7 +216,7 @@
   <div id="zzz"><span>z</span><span>z</span><span>Z</span></div>
 
   <div id="rig">
-    <div id="arm"><div id="radius"><div id="upright"><div id="facing">
+    <div id="arm"><div id="radius"><div id="orient">
       <div id="dog">
         <img id="photo" alt="">
         <svg id="vector" viewBox="0 0 150 105" xmlns="http://www.w3.org/2000/svg">
@@ -262,7 +259,7 @@
           </g>
         </svg>
       </div>
-    </div></div></div></div>
+    </div></div></div>
   </div>
 
   <div id="demo-badge">DEMO MODE</div>
@@ -316,7 +313,7 @@ const CONFIG = {
     sleep: { size: 64, gait: 0,    bob: 3.4,  wag: 2.4, orbitR: 0,  orbitDur: 0 },
     walk:  { size: 58, gait: 0.7,  bob: 1.5,  wag: 1.1, orbitR: 0,  orbitDur: 0 },
     run:   { size: 48, gait: 0.3,  bob: 0.5,  wag: 0.5, orbitR: 0,  orbitDur: 0 },
-    panic: { size: 26, gait: 0.13, bob: 0.22, wag: 0.2, orbitR: 66, orbitDur: 1.6 },
+    panic: { size: 26, gait: 0.13, bob: 0.22, wag: 0.2, orbitR: 81, orbitDur: 1.6 },
   },
 
   showReadout: true,
