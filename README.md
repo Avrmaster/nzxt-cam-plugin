@@ -3,12 +3,15 @@
 NZXT CAM Web Integration that shows Villiam reacting to how hard your PC is
 working. Four states, driven by **load only**.
 
-| Stress | State | Color | Villiam |
-|---|---|---|---|
-| < 25 | sleeping | blue | Lies down, tucks his legs, breathes, floating z's |
-| 25–50 | pacing | green | Trots on the spot, ears swinging |
-| 50–75 | running | amber | Faster gait, tail going |
-| > 75 | MELTDOWN | red | Runs the inside of the bezel, paws on the rim, like a hamster wheel |
+| Load | State | Scene |
+|---|---|---|
+| < 25 | sleeping | Night. Crescent moon, twinkling stars, Villiam curled on a cushion with his tail tucked and eye shut, breathing, z's drifting up |
+| 25–50 | pacing | Daylight. Sun with haze, grass scrolling past, a butterfly flapping across, ears swinging as he trots |
+| 50–75 | running | Chase. Speed lines streaking by, dust kicking up behind him, a tennis ball rolling along, ground racing past |
+| > 75 | MELTDOWN | Fire. Flames licking up from below, embers rising, a rotating hazard ring, the whole panel shaking, and Villiam tearing around the inside of the bezel like a hamster wheel |
+
+Each state has its own scenery layer that cross-fades in, so the four don't
+just differ by colour — they're different little worlds.
 
 ## Why load and not temperature
 
