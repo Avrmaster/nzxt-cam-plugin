@@ -13,6 +13,10 @@ working. Four states, driven by **load only**.
 Each state has its own scenery layer that cross-fades in, so the four don't
 just differ by colour — they're different little worlds.
 
+States move **one step at a time**, so a game launch reads as an escalation:
+sleeping → pacing → running → MELTDOWN, about 8 seconds of sustained full load
+end to end, and roughly 10 seconds back down to sleeping when you close it.
+
 ## Why load and not temperature
 
 Temperatures depend entirely on your cooling. A good loop stays cool at full
@@ -88,6 +92,14 @@ is 1-bit and leaves jagged fringing against the black LCD background.
 Everything lives in the `CONFIG` object at the top of the script in
 `index.html`:
 
+- `smoothing` — exponential moving average on the load signal (0.15 ≈ 7s
+  response at CAM's 1Hz). Raw load is violently spiky; this is what stops a
+  one-second spike from throwing Villiam across the screen
+- `transitionSec` — how long a state change takes. Also drives every CSS
+  transition via the `--trans` variable, so the JS gate and the animations
+  can't drift apart
+- `holdSec` — extra dwell after a transition settles. Minimum time in any
+  state is `transitionSec + holdSec`
 - `thresholds` — where each state starts (load %)
 - `hysteresis` — how far past a threshold before switching, so he doesn't
   flicker at boundaries

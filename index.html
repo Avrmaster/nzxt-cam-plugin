@@ -10,6 +10,7 @@
     --c-walk:  #22b573;
     --c-run:   #f5a623;
     --c-panic: #e23b3b;
+    --trans: 2s;   /* overwritten from CONFIG.transitionSec at startup */
     /* Villiam's actual colouring, sampled from his photos */
     --fur-cream:   #f7efe2;
     --fur-shadow:  #e0d3bf;
@@ -42,7 +43,7 @@
     background-color: var(--c-sleep);
     opacity: 0.32;
     filter: blur(48px);
-    transition: background-color 1.6s ease;
+    transition: background-color var(--trans) ease;
   }
 
   #ring {
@@ -50,7 +51,7 @@
     border-radius: 50%;
     border: 3px solid var(--c-sleep);
     opacity: 0.85;
-    transition: border-color 1.6s ease;
+    transition: border-color var(--trans) ease;
   }
 
   /* ---- Orbit rig: hamster wheel ----
@@ -68,11 +69,11 @@
   }
   #radius {
     transform: translateX(var(--orbit-r, 0px));
-    transition: transform 1s ease;
+    transition: transform var(--trans) ease;
   }
   #orient {
     transform: rotate(0deg);
-    transition: transform 0.7s ease;
+    transition: transform var(--trans) ease;
   }
   #stage.orbiting #orient { transform: rotate(var(--feet-rot, -90deg)); }
   #stage.orbiting #arm {
@@ -84,7 +85,7 @@
   #dog {
     width: var(--dog-size, 150px);
     margin: calc(var(--dog-size, 150px) * -0.35) 0 0 calc(var(--dog-size, 150px) / -2);
-    transition: width 1s ease, margin 1s ease;
+    transition: width var(--trans) ease, margin var(--trans) ease;
   }
   #dog svg { width: 100%; height: auto; display: block; overflow: visible; }
 
@@ -152,7 +153,7 @@
     z-index: 1;
     pointer-events: none;
   }
-  .scene { opacity: 0; transition: opacity 1.1s ease; }
+  .scene { opacity: 0; transition: opacity var(--trans) ease; }
   #stage[data-state="sleep"] .s-sleep,
   #stage[data-state="walk"]  .s-walk,
   #stage[data-state="run"]   .s-run,
@@ -263,7 +264,7 @@
     z-index: 3;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.8s ease;
+    transition: opacity var(--trans) ease;
   }
   #zzz.visible { opacity: 1; }
   #zzz span {
@@ -295,7 +296,7 @@
     letter-spacing: 0.28em;
     text-transform: uppercase;
     color: var(--c-sleep);
-    transition: color 1.6s ease;
+    transition: color var(--trans) ease;
     margin-bottom: 4px;
   }
   #temps { font-size: 20px; font-weight: 600; }
@@ -488,7 +489,21 @@ const CONFIG = {
 
   // Hysteresis: state only changes after crossing a threshold by this
   // margin, so Villiam doesn't flicker at boundaries.
-  hysteresis: 4,
+  hysteresis: 6,
+
+  // Raw load is extremely spiky — it can read 5% then 90% then 20% in three
+  // consecutive seconds. Smooth it with an exponential moving average before
+  // it decides anything. Lower = calmer. 0.15 at CAM's 1Hz works out to
+  // roughly a 7 second response.
+  smoothing: 0.15,
+
+  // How long a state change takes to settle, in seconds. This drives the CSS
+  // transitions too (via --trans), so the two can never drift apart.
+  transitionSec: 2.0,
+
+  // Extra dwell after a transition finishes before another may start. So the
+  // minimum time in any state is transitionSec + holdSec.
+  holdSec: 1.5,
 
   // Per-state motion. gait/bob/wag are CSS durations in seconds (smaller =
   // faster). size and orbitR are PERCENTAGES of the panel's smaller
@@ -531,9 +546,15 @@ function normTemp(t) {
   if (t == null || isNaN(t)) return 0;
   return clamp(((t - CONFIG.tempMin) / (CONFIG.tempMax - CONFIG.tempMin)) * 100, 0, 100);
 }
+/* CAM reports load as 0..100. The old per-sample guess (l <= 1 ? l*100 : l)
+   read a genuine 1% load as 100%, pinning Villiam in MELTDOWN at idle.
+   Default to percent and only switch to fraction scale on unambiguous
+   evidence: a non-integer strictly between 0 and 1 can only be a fraction. */
+let loadIsFraction = false;
 function normLoad(l) {
   if (l == null || isNaN(l)) return 0;
-  const pct = l <= 1 ? l * 100 : l;   // CAM may report 0..1 or 0..100
+  if (l > 0 && l < 1 && l !== Math.floor(l)) loadIsFraction = true;
+  const pct = loadIsFraction ? l * 100 : l;
   return clamp(pct, 0, 100) * CONFIG.loadWeight;
 }
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
@@ -546,14 +567,18 @@ function computeStress(m) {
 
 /* ---- state machine with hysteresis ---- */
 let currentState = "sleep";
+
+/* Moves at most ONE step per call, so a cold machine launching a game escalates
+   sleep -> pacing -> running -> MELTDOWN instead of snapping straight to the
+   end. Combined with the dwell gate that reads as a build-up rather than a jump. */
 function nextState(stress) {
   const t = CONFIG.thresholds, h = CONFIG.hysteresis;
   const up   = [t.walk + h, t.run + h, t.panic + h]; // must exceed to climb
   const down = [t.walk - h, t.run - h, t.panic - h]; // must drop below to fall
-  let target = STATES.indexOf(currentState);
-  while (target < 3 && stress >= up[target]) target++;
-  while (target > 0 && stress < down[target - 1]) target--;
-  return STATES[target];
+  const i = STATES.indexOf(currentState);
+  if (i < 3 && stress >= up[i]) return STATES[i + 1];
+  if (i > 0 && stress < down[i - 1]) return STATES[i - 1];
+  return currentState;
 }
 
 /* ============================================================
@@ -569,8 +594,15 @@ const tempsEl = document.getElementById("temps");
 const loadsEl = document.getElementById("loads");
 
 let lastMetrics = {};
+let smoothedStress = null;
+let lastChangeAt = -Infinity;
 
-function render() {
+/* Split deliberately. renderState touches colours, sizes and animation
+   durations and runs ONLY when the state actually changes — rewriting
+   animation-duration variables on every CAM sample re-evaluates the running
+   animations once a second, which is visible as a stutter. renderReadout is
+   the cheap text update and runs every sample. */
+function renderState() {
   const s = currentState;
   const color = COLORS[s];
   const m = CONFIG.motion[s];
@@ -598,23 +630,41 @@ function render() {
   if (photoOk[s]) photo.src = CONFIG.assets[s];
 
   zzz.classList.toggle("visible", s === "sleep");
-
-  if (CONFIG.showReadout) {
-    const f = (v) => (v == null || isNaN(v)) ? "--" : Math.round(v);
-    tempsEl.textContent = `CPU ${f(lastMetrics.cpuTemp)}° · GPU ${f(lastMetrics.gpuTemp)}°`;
-    const lp = (v) => (v == null || isNaN(v)) ? "--" : Math.round(v <= 1 ? v * 100 : v);
-    loadsEl.textContent = `load ${lp(lastMetrics.cpuLoad)}% / ${lp(lastMetrics.gpuLoad)}%`;
-  } else {
-    document.getElementById("readout").style.display = "none";
-  }
 }
+
+function renderReadout() {
+  if (!CONFIG.showReadout) {
+    document.getElementById("readout").style.display = "none";
+    return;
+  }
+  const f = (v) => (v == null || isNaN(v)) ? "--" : Math.round(v);
+  tempsEl.textContent = `CPU ${f(lastMetrics.cpuTemp)}° · GPU ${f(lastMetrics.gpuTemp)}°`;
+  const lp = (v) => (v == null || isNaN(v)) ? "--" : Math.round(loadIsFraction ? v * 100 : v);
+  loadsEl.textContent = `load ${lp(lastMetrics.cpuLoad)}% / ${lp(lastMetrics.gpuLoad)}%`;
+}
+
+function render() { renderState(); renderReadout(); }
 
 function update(metrics) {
   lastMetrics = metrics;
-  const stress = computeStress(metrics);
-  const s = nextState(stress);
-  if (s !== currentState) { currentState = s; }
-  render();
+
+  // smooth the spiky raw signal before it is allowed to decide anything
+  const raw = computeStress(metrics);
+  smoothedStress = (smoothedStress === null)
+    ? raw
+    : smoothedStress + (raw - smoothedStress) * CONFIG.smoothing;
+
+  const want = nextState(smoothedStress);
+  const now = (window.performance && performance.now) ? performance.now() : Date.now();
+  const gate = (CONFIG.transitionSec + CONFIG.holdSec) * 1000;
+
+  // hold the new state until the previous transition has finished settling
+  if (want !== currentState && (now - lastChangeAt) >= gate) {
+    currentState = want;
+    lastChangeAt = now;
+    renderState();
+  }
+  renderReadout();
 }
 
 /* ============================================================
@@ -726,6 +776,9 @@ if (debugOn) {
       " gpu:" + JSON.stringify(lastMetrics.gpuLoad);
   }, 500);
 }
+
+// one source of truth for how slow everything feels
+document.documentElement.style.setProperty("--trans", CONFIG.transitionSec + "s");
 
 window.addEventListener("resize", render);
 render();
